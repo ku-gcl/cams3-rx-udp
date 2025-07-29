@@ -1,17 +1,17 @@
-#include "esp_camera.h"
-#include "esp_wifi.h"
-#include "nvs_flash.h"
-#include "driver/mcpwm_prelude.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "lwip/sockets.h"
-#include "lwip/err.h"
-#include "lwip/sys.h"
-#include "esp_log.h"
-#include "driver/ledc.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
+#include "driver/mcpwm_prelude.h"
+#include "esp_camera.h"
+#include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+#include "nvs_flash.h"
 
 constexpr uint32_t SERVO_TIMEBASE_RESOLUTION_HZ = 1000000;
 constexpr uint32_t SERVO_TIMEBASE_PERIOD = 20000;
@@ -38,7 +38,7 @@ static constexpr gpio_num_t LED_GPIO_NUM = GPIO_NUM_14;
 #define HREF_GPIO_NUM 18
 #define PCLK_GPIO_NUM 12
 
-#define LED_GPIO_NUM (gpio_num_t) 14
+#define LED_GPIO_NUM (gpio_num_t)14
 
 #elif defined(SEEED_XIAO_ESP32S3)
 static constexpr gpio_num_t SERVO1_PIN = GPIO_NUM_3;
@@ -67,37 +67,35 @@ static constexpr gpio_num_t LED_GPIO_NUM = GPIO_NUM_21;
 
 static const char *TAG = "cams3rx";
 
-typedef struct
-{
+typedef struct {
     uint32_t packet_id;
     uint16_t servo[2];
 } input_t;
 
-
 const size_t max_buf = 8192;
 
-typedef struct
-{
-    size_t len;                                    /*!< Length of the buffer in bytes */
-    size_t width;                                  /*!< Width of the buffer in pixels */
-    size_t height;                                 /*!< Height of the buffer in pixels */
-    pixformat_t format;                            /*!< Format of the pixel data */
-    struct timeval camera_timestamp;               /*!< Timestamp since boot of the first DMA buffer of the frame */
-    struct timeval last_received_packet_timestamp; /*!< Timestamp of packet reception */
-    uint32_t last_received_packet_id;              /*!< Packet ID */
-    uint8_t image[max_buf];                          /*!< data */
+typedef struct {
+    size_t len;                      /*!< Length of the buffer in bytes */
+    size_t width;                    /*!< Width of the buffer in pixels */
+    size_t height;                   /*!< Height of the buffer in pixels */
+    pixformat_t format;              /*!< Format of the pixel data */
+    struct timeval camera_timestamp; /*!< Timestamp since boot of the first DMA
+                                        buffer of the frame */
+    struct timeval
+        last_received_packet_timestamp; /*!< Timestamp of packet reception */
+    uint32_t last_received_packet_id;   /*!< Packet ID */
+    uint8_t image[max_buf];             /*!< data */
 } output_t;
-
 
 // load wifi configuration from environment variables
 #if defined(CAMS3RX_WIFI_MODE_AP)
-    constexpr wifi_mode_t WIFI_MODE = WIFI_MODE_AP;
+constexpr wifi_mode_t WIFI_MODE = WIFI_MODE_AP;
 #elif defined(CAMS3RX_WIFI_MODE_STA)
-    constexpr wifi_mode_t WIFI_MODE = WIFI_MODE_STA;
+constexpr wifi_mode_t WIFI_MODE = WIFI_MODE_STA;
 #else
-    // or set the wifi mode here
-    // wifi mode (WIFI_MODE_AP or WIFI_MODE_STA)
-    constexpr wifi_mode_t WIFI_MODE = WIFI_MODE_AP;
+// or set the wifi mode here
+// wifi mode (WIFI_MODE_AP or WIFI_MODE_STA)
+constexpr wifi_mode_t WIFI_MODE = WIFI_MODE_AP;
 #endif
 
 // load wifi configuration from environment variables
@@ -137,8 +135,8 @@ static int s_retry_num = 0;
 
 static QueueHandle_t vsync_queue = NULL;
 
-static void IRAM_ATTR vsync_isr_handler(void* arg) {
-    uint32_t gpio_num = (uint32_t) arg;
+static void IRAM_ATTR vsync_isr_handler(void *arg) {
+    uint32_t gpio_num = (uint32_t)arg;
     xQueueSendFromISR(vsync_queue, &gpio_num, NULL);
 }
 
@@ -151,59 +149,51 @@ void init_vsync_interrupt() {
     io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
     gpio_config(&io_conf);
     gpio_install_isr_service(0);
-    gpio_isr_handler_add((gpio_num_t) VSYNC_GPIO_NUM, vsync_isr_handler, (void*) VSYNC_GPIO_NUM);
+    gpio_isr_handler_add((gpio_num_t)VSYNC_GPIO_NUM, vsync_isr_handler,
+                         (void *)VSYNC_GPIO_NUM);
 }
 
-
 static void handler_on_wifi_disconnect(void *arg, esp_event_base_t event_base,
-                                               int32_t event_id, void *event_data)
-{
+                                       int32_t event_id, void *event_data) {
     s_retry_num++;
 
     ESP_LOGI(TAG, "Wi-Fi disconnected, trying to reconnect...");
     esp_err_t err = esp_wifi_connect();
-    if (err == ESP_ERR_WIFI_NOT_STARTED)
-    {
+    if (err == ESP_ERR_WIFI_NOT_STARTED) {
         return;
     }
     ESP_ERROR_CHECK(err);
 }
 
-static void example_handler_on_wifi_connect(void *esp_netif, esp_event_base_t event_base,
-                                            int32_t event_id, void *event_data)
-{
-}
+static void example_handler_on_wifi_connect(void *esp_netif,
+                                            esp_event_base_t event_base,
+                                            int32_t event_id,
+                                            void *event_data) {}
 
-bool example_is_our_netif(const char *prefix, esp_netif_t *netif)
-{
+bool example_is_our_netif(const char *prefix, esp_netif_t *netif) {
     return strncmp(prefix, esp_netif_get_desc(netif), strlen(prefix) - 1) == 0;
 }
 
-static void example_handler_on_sta_got_ip(void *arg, esp_event_base_t event_base,
-                                          int32_t event_id, void *event_data)
-{
+static void example_handler_on_sta_got_ip(void *arg,
+                                          esp_event_base_t event_base,
+                                          int32_t event_id, void *event_data) {
     s_retry_num = 0;
     ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-    if (!example_is_our_netif(NETIF_DESC_STA, event->esp_netif))
-    {
+    if (!example_is_our_netif(NETIF_DESC_STA, event->esp_netif)) {
         return;
     }
-    ESP_LOGI(TAG, "Got IPv4 event: Interface \"%s\" address: " IPSTR, esp_netif_get_desc(event->esp_netif), IP2STR(&event->ip_info.ip));
-    if (s_semph_get_ip_addrs)
-    {
+    ESP_LOGI(TAG, "Got IPv4 event: Interface \"%s\" address: " IPSTR,
+             esp_netif_get_desc(event->esp_netif), IP2STR(&event->ip_info.ip));
+    if (s_semph_get_ip_addrs) {
         xSemaphoreGive(s_semph_get_ip_addrs);
-    }
-    else
-    {
+    } else {
         ESP_LOGI(TAG, "- IPv4 address: " IPSTR ",", IP2STR(&event->ip_info.ip));
     }
 }
 
-void example_wifi_stop(void)
-{
+void example_wifi_stop(void) {
     esp_err_t err = esp_wifi_stop();
-    if (err == ESP_ERR_WIFI_NOT_INIT)
-    {
+    if (err == ESP_ERR_WIFI_NOT_INIT) {
         return;
     }
     ESP_ERROR_CHECK(err);
@@ -213,34 +203,32 @@ void example_wifi_stop(void)
     sta_netif = NULL;
 }
 
-esp_err_t example_wifi_sta_do_disconnect(void)
-{
-    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &handler_on_wifi_disconnect));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &example_handler_on_sta_got_ip));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &example_handler_on_wifi_connect));
+esp_err_t example_wifi_sta_do_disconnect(void) {
+    ESP_ERROR_CHECK(esp_event_handler_unregister(
+        WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &handler_on_wifi_disconnect));
+    ESP_ERROR_CHECK(esp_event_handler_unregister(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &example_handler_on_sta_got_ip));
+    ESP_ERROR_CHECK(
+        esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED,
+                                     &example_handler_on_wifi_connect));
 
-    if (s_semph_get_ip_addrs)
-    {
+    if (s_semph_get_ip_addrs) {
         vSemaphoreDelete(s_semph_get_ip_addrs);
     }
     return esp_wifi_disconnect();
 }
 
-void example_wifi_shutdown(void)
-{
+void example_wifi_shutdown(void) {
     example_wifi_sta_do_disconnect();
     example_wifi_stop();
 }
 
-static esp_err_t print_all_ips_tcpip(void *ctx)
-{
+static esp_err_t print_all_ips_tcpip(void *ctx) {
     const char *prefix = static_cast<const char *>(ctx);
     // iterate over active interfaces, and print out IPs of "our" netifs
     esp_netif_t *netif = NULL;
-    while ((netif = esp_netif_next_unsafe(netif)) != NULL)
-    {
-        if (example_is_our_netif(prefix, netif))
-        {
+    while ((netif = esp_netif_next_unsafe(netif)) != NULL) {
+        if (example_is_our_netif(prefix, netif)) {
             ESP_LOGI(TAG, "Connected to %s", esp_netif_get_desc(netif));
             esp_netif_ip_info_t ip;
             ESP_ERROR_CHECK(esp_netif_get_ip_info(netif, &ip));
@@ -251,22 +239,24 @@ static esp_err_t print_all_ips_tcpip(void *ctx)
     return ESP_OK;
 }
 
-void example_print_all_netif_ips(const char *prefix)
-{
-    // Print all IPs in TCPIP context to avoid potential races of removing/adding netifs when iterating over the list
+void example_print_all_netif_ips(const char *prefix) {
+    // Print all IPs in TCPIP context to avoid potential races of
+    // removing/adding netifs when iterating over the list
     esp_netif_tcpip_exec(print_all_ips_tcpip, (void *)prefix);
 }
 
-static void example_handler_on_ap_sta_connected(void *arg, esp_event_base_t event_base,
-                                                int32_t event_id, void *event_data)
-{
+static void example_handler_on_ap_sta_connected(void *arg,
+                                                esp_event_base_t event_base,
+                                                int32_t event_id,
+                                                void *event_data) {
     ESP_LOGI(TAG, "A station connected to the AP.");
     xEventGroupSetBits(EventConnected, BIT0);
 }
 
-static void example_handler_on_ap_sta_disconnected(void *arg, esp_event_base_t event_base,
-                                                   int32_t event_id, void *event_data)
-{
+static void example_handler_on_ap_sta_disconnected(void *arg,
+                                                   esp_event_base_t event_base,
+                                                   int32_t event_id,
+                                                   void *event_data) {
     ESP_LOGI(TAG, "A station disconnected from the AP.");
     xEventGroupClearBits(EventConnected, BIT0);
 }
@@ -274,8 +264,7 @@ static void example_handler_on_ap_sta_disconnected(void *arg, esp_event_base_t e
 static output_t sensor_dat;
 SemaphoreHandle_t xOutputMutex;
 
-inline int process_camera_frame()
-{
+inline int process_camera_frame() {
     static int count = 0;
     count = (count + 1) % 107;
 
@@ -283,13 +272,12 @@ inline int process_camera_frame()
 
     camera_fb_t *fb = esp_camera_fb_get();
 
-    if (!fb)
-    {
+    if (!fb) {
         ESP_LOGE(TAG, "Camera capture failed");
         return -1;
     }
 
-    if(fb->len > max_buf){
+    if (fb->len > max_buf) {
         ESP_LOGE(TAG, "Buffer overflow: %d > %d", fb->len, max_buf);
         esp_camera_fb_return(fb);
         return -1;
@@ -304,15 +292,14 @@ inline int process_camera_frame()
     size_t fb_size = fb->len;
     esp_camera_fb_return(fb);
     int64_t end_time = esp_timer_get_time();
-    if (count == 1)
-    {
-        ESP_LOGI(TAG, "process_frame() took %lld us, size=%d", end_time - start_time, fb_size);
+    if (count == 1) {
+        ESP_LOGI(TAG, "process_frame() took %lld us, size=%d",
+                 end_time - start_time, fb_size);
     }
     return 0;
 }
 
-static void camera_task(void *pvParameters)
-{
+static void camera_task(void *pvParameters) {
     int err;
     int addr_family = AF_INET;
     int ip_protocol = IPPROTO_IP;
@@ -323,8 +310,7 @@ static void camera_task(void *pvParameters)
     int led_state = 0;
 
     udp_socket_send = socket(addr_family, SOCK_DGRAM, ip_protocol);
-    if (udp_socket_send < 0)
-    {
+    if (udp_socket_send < 0) {
         ESP_LOGE(TAG, "Unable to create send socket: errno %d", errno);
         close(udp_socket_send);
         vTaskDelete(NULL);
@@ -332,50 +318,55 @@ static void camera_task(void *pvParameters)
     }
     ESP_LOGI(TAG, "Send Socket created");
     int broadcast = 1;
-    setsockopt(udp_socket_send, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
+    setsockopt(udp_socket_send, SOL_SOCKET, SO_BROADCAST, &broadcast,
+               sizeof(broadcast));
 
     // Set IP Precedence to AC_VO (Voice) to prevent packets to be aggregated
     const int ip_precedence_vi = 7;
     const int ip_precedence_offset = 5;
     int priority = (ip_precedence_vi << ip_precedence_offset);
-    setsockopt(udp_socket_send, IPPROTO_IP, IP_TOS, &priority, sizeof(priority));
+    setsockopt(udp_socket_send, IPPROTO_IP, IP_TOS, &priority,
+               sizeof(priority));
 
     // Set non-blocking mode
     int flags = fcntl(udp_socket_send, F_GETFL, 0);
     err = fcntl(udp_socket_send, F_SETFL, flags | O_NONBLOCK);
-    if (err < 0)
-    {
-        ESP_LOGE(TAG, "Send Socket unable to set non-blocking mode: errno %d", errno);
+    if (err < 0) {
+        ESP_LOGE(TAG, "Send Socket unable to set non-blocking mode: errno %d",
+                 errno);
         close(udp_socket_send);
         vTaskDelete(NULL);
         return;
     }
 
-    while (1)
-    {
-        if (xEventGroupGetBits(EventConnected) & BIT0)
-        {
-            uint32_t  io_num;
-             if (xQueueReceive(vsync_queue, &io_num, portMAX_DELAY)) {
+    while (1) {
+        if (xEventGroupGetBits(EventConnected) & BIT0) {
+            uint32_t io_num;
+            if (xQueueReceive(vsync_queue, &io_num, portMAX_DELAY)) {
                 int err = process_camera_frame();
-                if(err<0){
+                if (err < 0) {
                     continue;
                 }
 
-                struct sockaddr_in *target_addr = is_broadcast ? &broadcast_addr : (struct sockaddr_in *)&source_addr;
+                struct sockaddr_in *target_addr =
+                    is_broadcast ? &broadcast_addr
+                                 : (struct sockaddr_in *)&source_addr;
                 target_addr->sin_port = htons(udp_send_port);
 
-                err = sendto(udp_socket_send, &sensor_dat, sizeof(sensor_dat)/* - (max_buf - sensor_dat.len)*/, 0, (struct sockaddr *)target_addr, sizeof(*target_addr));
+                err = sendto(
+                    udp_socket_send, &sensor_dat,
+                    sizeof(sensor_dat) /* - (max_buf - sensor_dat.len)*/, 0,
+                    (struct sockaddr *)target_addr, sizeof(*target_addr));
 
-                if (err < 0)
-                {
-                    ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+                if (err < 0) {
+                    ESP_LOGE(TAG, "Error occurred during sending: errno %d",
+                             errno);
                 }
-                if(is_broadcast){
+                if (is_broadcast) {
                     vTaskDelay(1000 / portTICK_PERIOD_MS);
                 }
-             }
-        }else{
+            }
+        } else {
             vTaskDelay(20);
         }
         gpio_set_level(LED_GPIO_NUM, led_state);
@@ -383,8 +374,7 @@ static void camera_task(void *pvParameters)
     }
 }
 
-static void udp_server_task(void *pvParameters)
-{
+static void udp_server_task(void *pvParameters) {
     char rx_buffer[128];
     struct sockaddr_in dest_addr;
     int addr_family = AF_INET;
@@ -397,8 +387,7 @@ static void udp_server_task(void *pvParameters)
     dest_addr.sin_port = htons(udp_recv_port);
 
     udp_socket_recv = socket(addr_family, SOCK_DGRAM, ip_protocol);
-    if (udp_socket_recv < 0)
-    {
+    if (udp_socket_recv < 0) {
         ESP_LOGE(TAG, "Unable to create receive socket: errno %d", errno);
         vTaskDelete(NULL);
         return;
@@ -406,18 +395,19 @@ static void udp_server_task(void *pvParameters)
     ESP_LOGI(TAG, "Receive Socket created");
 
     struct timeval tv;
-    tv.tv_sec = 0;  
-    tv.tv_usec = 100*1000; 
-    if (setsockopt(udp_socket_recv, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+    tv.tv_sec = 0;
+    tv.tv_usec = 100 * 1000;
+    if (setsockopt(udp_socket_recv, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) <
+        0) {
         ESP_LOGE(TAG, "Error setting socket timeout");
         close(udp_socket_recv);
         vTaskDelete(NULL);
         return;
     }
 
-    err = bind(udp_socket_recv, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-    if (err < 0)
-    {
+    err =
+        bind(udp_socket_recv, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    if (err < 0) {
         ESP_LOGE(TAG, "Receive Socket unable to bind: errno %d", errno);
         close(udp_socket_recv);
         vTaskDelete(NULL);
@@ -425,36 +415,36 @@ static void udp_server_task(void *pvParameters)
     }
     ESP_LOGI(TAG, "Receive Socket bound, port %d", ntohs(dest_addr.sin_port));
 
-    while (1)
-    {
-        int len = recvfrom(udp_socket_recv, rx_buffer, sizeof(rx_buffer), 0, (struct sockaddr *)&source_addr, &socklen);
+    while (1) {
+        int len = recvfrom(udp_socket_recv, rx_buffer, sizeof(rx_buffer), 0,
+                           (struct sockaddr *)&source_addr, &socklen);
 
-        if (len > 0)
-        {
+        if (len > 0) {
             last_received = (uint64_t)esp_timer_get_time();
             struct timeval packet_timestamp = {
                 .tv_sec = (time_t)(last_received / 1000000ULL),
                 .tv_usec = (suseconds_t)(last_received % 1000000ULL)};
             sensor_dat.last_received_packet_timestamp = packet_timestamp;
-            if (is_broadcast)
-            {
+            if (is_broadcast) {
                 ESP_LOGI(TAG, "exit broadcast mode");
             }
             is_broadcast = false;
             memcpy(&input_dat, rx_buffer, sizeof(input_t));
             sensor_dat.last_received_packet_id = input_dat.packet_id;
-            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator_1, input_dat.servo[0]));
-            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator_2, input_dat.servo[1]));
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(
+                comparator_1, input_dat.servo[0]));
+            ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(
+                comparator_2, input_dat.servo[1]));
         }
-        if (len < 0){
+        if (len < 0) {
             uint64_t now = (uint64_t)esp_timer_get_time();
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-                ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator_1, 0));
-                ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator_2, 0));
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                ESP_ERROR_CHECK(
+                    mcpwm_comparator_set_compare_value(comparator_1, 0));
+                ESP_ERROR_CHECK(
+                    mcpwm_comparator_set_compare_value(comparator_2, 0));
 
-                if (!is_broadcast && now - last_received > 10*1000*1000)
-                {
+                if (!is_broadcast && now - last_received > 10 * 1000 * 1000) {
                     is_broadcast = true;
                     ESP_LOGI(TAG, "enter broadcast mode");
                 }
@@ -466,14 +456,14 @@ static void udp_server_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-inline esp_err_t wifi_connect_sta()
-{
+inline esp_err_t wifi_connect_sta() {
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-    esp_netif_inherent_config_t esp_netif_config = ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
+    esp_netif_inherent_config_t esp_netif_config =
+        ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
     esp_netif_config.if_desc = NETIF_DESC_STA;
     esp_netif_config.route_prio = 128;
     sta_netif = esp_netif_create_wifi(WIFI_IF_STA, &esp_netif_config);
@@ -492,22 +482,25 @@ inline esp_err_t wifi_connect_sta()
     strcpy((char *)wifi_config.sta.password, WIFI_PASSWORD);
 
     s_semph_get_ip_addrs = xSemaphoreCreateBinary();
-    if (s_semph_get_ip_addrs == NULL)
-    {
+    if (s_semph_get_ip_addrs == NULL) {
         ESP_LOGE(TAG, "Failed to create semaphore");
         return ESP_FAIL;
     }
 
     s_retry_num = 0;
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &handler_on_wifi_disconnect, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &example_handler_on_sta_got_ip, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &example_handler_on_wifi_connect, sta_netif));
+    ESP_ERROR_CHECK(
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED,
+                                   &handler_on_wifi_disconnect, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &example_handler_on_sta_got_ip, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(
+        WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &example_handler_on_wifi_connect,
+        sta_netif));
 
     ESP_LOGI(TAG, "Connecting to %s...", wifi_config.sta.ssid);
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     esp_err_t ret = esp_wifi_connect();
-    if (ret != ESP_OK)
-    {
+    if (ret != ESP_OK) {
         ESP_LOGE(TAG, "WiFi connect failed! ret:%x", ret);
         return ret;
     }
@@ -521,17 +514,21 @@ inline esp_err_t wifi_connect_sta()
     return ESP_OK;
 }
 
-inline esp_err_t wifi_connect_ap()
-{
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED, &example_handler_on_ap_sta_connected, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED, &example_handler_on_ap_sta_disconnected, NULL));
+inline esp_err_t wifi_connect_ap() {
+    ESP_ERROR_CHECK(
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STACONNECTED,
+                                   &example_handler_on_ap_sta_connected, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(
+        WIFI_EVENT, WIFI_EVENT_AP_STADISCONNECTED,
+        &example_handler_on_ap_sta_disconnected, NULL));
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-    esp_netif_inherent_config_t esp_netif_config = ESP_NETIF_INHERENT_DEFAULT_WIFI_AP();
+    esp_netif_inherent_config_t esp_netif_config =
+        ESP_NETIF_INHERENT_DEFAULT_WIFI_AP();
     esp_netif_config.if_desc = NETIF_DESC_AP;
     esp_netif_config.route_prio = 128;
     ap_netif = esp_netif_create_wifi(WIFI_IF_AP, &esp_netif_config);
@@ -548,14 +545,14 @@ inline esp_err_t wifi_connect_ap()
     wifi_config.ap.max_connection = 1;
     wifi_config.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
 
-    if (strlen(WIFI_PASSWORD) == 0)
-    {
+    if (strlen(WIFI_PASSWORD) == 0) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
 
-    ESP_LOGI(TAG, "WiFi AP started. SSID:%s password:%s", WIFI_SSID, WIFI_PASSWORD);
+    ESP_LOGI(TAG, "WiFi AP started. SSID:%s password:%s", WIFI_SSID,
+             WIFI_PASSWORD);
 
     // Set up the DHCP server
     esp_netif_ip_info_t ip_info;
@@ -570,8 +567,7 @@ inline esp_err_t wifi_connect_ap()
     return ESP_OK;
 }
 
-void init_servo()
-{
+void init_servo() {
     ESP_LOGI(TAG, "Create timer and operator");
     mcpwm_timer_handle_t timer = NULL;
 
@@ -582,15 +578,15 @@ void init_servo()
         .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
         .period_ticks = SERVO_TIMEBASE_PERIOD,
         .intr_priority = 0,
-        .flags = {
-            .update_period_on_empty = false, 
-            .update_period_on_sync = false},
-    };    
+        .flags = {.update_period_on_empty = false,
+                  .update_period_on_sync = false},
+    };
     ESP_ERROR_CHECK(mcpwm_new_timer(&timer_config, &timer));
 
     mcpwm_oper_handle_t oper = NULL;
     mcpwm_operator_config_t operator_config = {};
-    operator_config.group_id = 0; // operator must be in the same group as the timer
+    operator_config.group_id =
+        0; // operator must be in the same group as the timer
 
     ESP_ERROR_CHECK(mcpwm_new_operator(&operator_config, &oper));
 
@@ -602,59 +598,73 @@ void init_servo()
     mcpwm_comparator_config_t comparator_config = {};
     comparator_config.flags.update_cmp_on_tez = true;
 
-    ESP_ERROR_CHECK(mcpwm_new_comparator(oper, &comparator_config, &comparator_1));
-    ESP_ERROR_CHECK(mcpwm_new_comparator(oper, &comparator_config, &comparator_2));
+    ESP_ERROR_CHECK(
+        mcpwm_new_comparator(oper, &comparator_config, &comparator_1));
+    ESP_ERROR_CHECK(
+        mcpwm_new_comparator(oper, &comparator_config, &comparator_2));
 
     mcpwm_gen_handle_t generator_1 = NULL;
     mcpwm_gen_handle_t generator_2 = NULL;
     mcpwm_generator_config_t generator_config_1 = {
         .gen_gpio_num = SERVO1_PIN,
-        .flags = {
-            .invert_pwm = false,
-            .io_loop_back = false,
-            .io_od_mode = false,
-            .pull_up = false,
-            .pull_down = false,
-        },
+        .flags =
+            {
+                .invert_pwm = false,
+                .io_loop_back = false,
+                .io_od_mode = false,
+                .pull_up = false,
+                .pull_down = false,
+            },
     };
     mcpwm_generator_config_t generator_config_2 = {
         .gen_gpio_num = SERVO2_PIN,
-        .flags = {
-            .invert_pwm = false,
-            .io_loop_back = false,
-            .io_od_mode = false,
-            .pull_up = false,
-            .pull_down = false,
-        },
+        .flags =
+            {
+                .invert_pwm = false,
+                .io_loop_back = false,
+                .io_od_mode = false,
+                .pull_up = false,
+                .pull_down = false,
+            },
     };
-    ESP_ERROR_CHECK(mcpwm_new_generator(oper, &generator_config_1, &generator_1));
-    ESP_ERROR_CHECK(mcpwm_new_generator(oper, &generator_config_2, &generator_2));
+    ESP_ERROR_CHECK(
+        mcpwm_new_generator(oper, &generator_config_1, &generator_1));
+    ESP_ERROR_CHECK(
+        mcpwm_new_generator(oper, &generator_config_2, &generator_2));
 
-    // set the initial compare value, so that the servo will spin to the center position
+    // set the initial compare value, so that the servo will spin to the center
+    // position
     ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator_1, 1500));
     ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator_2, 1500));
 
     ESP_LOGI(TAG, "Set generator action on timer and compare event");
     // go high on counter empty
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(generator_1,
-                                                              MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH)));
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(generator_2,
-                                                              MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH)));
+    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(
+        generator_1, MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
+                                                  MCPWM_TIMER_EVENT_EMPTY,
+                                                  MCPWM_GEN_ACTION_HIGH)));
+    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(
+        generator_2, MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
+                                                  MCPWM_TIMER_EVENT_EMPTY,
+                                                  MCPWM_GEN_ACTION_HIGH)));
     // go low on compare threshold
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(generator_1,
-                                                                MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator_1, MCPWM_GEN_ACTION_LOW)));
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(generator_2,
-                                                                MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator_2, MCPWM_GEN_ACTION_LOW)));
+    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(
+        generator_1,
+        MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator_1,
+                                       MCPWM_GEN_ACTION_LOW)));
+    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(
+        generator_2,
+        MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator_2,
+                                       MCPWM_GEN_ACTION_LOW)));
     ESP_LOGI(TAG, "Enable and start timer");
     ESP_ERROR_CHECK(mcpwm_timer_enable(timer));
     ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
 }
 
-extern "C" void app_main()
-{
+extern "C" void app_main() {
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
@@ -665,16 +675,14 @@ extern "C" void app_main()
     uint32_t _caps = MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM;
     size_t free_heap = heap_caps_get_free_size(_caps);
     size_t largest_free_block = heap_caps_get_largest_free_block(_caps);
-    ESP_LOGI(TAG, "_caps: %d, free heap size: %d, Largest free block: %d", (int)_caps, free_heap, largest_free_block);
+    ESP_LOGI(TAG, "_caps: %d, free heap size: %d, Largest free block: %d",
+             (int)_caps, free_heap, largest_free_block);
 
     EventConnected = xEventGroupCreate();
 
-    if (WIFI_MODE == WIFI_MODE_STA)
-    {
+    if (WIFI_MODE == WIFI_MODE_STA) {
         wifi_connect_sta();
-    }
-    else if (WIFI_MODE == WIFI_MODE_AP)
-    {
+    } else if (WIFI_MODE == WIFI_MODE_AP) {
         wifi_connect_ap();
     }
 
@@ -710,16 +718,17 @@ extern "C" void app_main()
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.grab_mode = CAMERA_GRAB_LATEST;
 
-    if (esp_camera_init(&config) != ESP_OK)
-    {
+    if (esp_camera_init(&config) != ESP_OK) {
         ESP_LOGE(TAG, "Camera init failed");
         return;
     }
     xOutputMutex = xSemaphoreCreateMutex();
     xSemaphoreGive(xOutputMutex);
-    xTaskCreatePinnedToCore(udp_server_task, "udp_server", 4096, (void *)AF_INET, 10, NULL, 0);
+    xTaskCreatePinnedToCore(udp_server_task, "udp_server", 4096,
+                            (void *)AF_INET, 10, NULL, 0);
     init_vsync_interrupt();
-    xTaskCreatePinnedToCore(camera_task, "camera_task", 4096, NULL, 10, NULL, 1);
+    xTaskCreatePinnedToCore(camera_task, "camera_task", 4096, NULL, 10, NULL,
+                            1);
 
     esp_rom_gpio_pad_select_gpio(LED_GPIO_NUM);
     gpio_set_direction(LED_GPIO_NUM, GPIO_MODE_OUTPUT);
