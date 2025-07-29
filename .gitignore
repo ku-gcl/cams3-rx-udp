@@ -8,3 +8,4 @@
 host/cpp/
 host/matlab/
 **/__pycache__
+.DS_Store
