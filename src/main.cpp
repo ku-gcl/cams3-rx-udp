@@ -687,7 +687,7 @@ extern "C" void app_main() {
     }
 
     // some boards have an issue with the default max power
-    // esp_wifi_set_max_tx_power(55);
+    esp_wifi_set_max_tx_power(40);
 
     init_servo();
 
@@ -712,7 +712,7 @@ extern "C" void app_main() {
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000L;
     config.pixel_format = PIXFORMAT_JPEG;
-    config.frame_size = FRAMESIZE_QCIF;
+    config.frame_size = FRAMESIZE_QCIF; // frame size
     config.jpeg_quality = 12;
     config.fb_count = 2;
     config.fb_location = CAMERA_FB_IN_PSRAM;
