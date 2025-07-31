@@ -3,8 +3,10 @@ import cv2
 import numpy as np
 from cams3tx import CamS3TX
 
-WIDTH = 176
-HEIGHT = 144
+# WIDTH = 176
+# HEIGHT = 144
+WIDTH = 320
+HEIGHT = 240
 SCALE = 4
 WINDOW_WIDTH = WIDTH * SCALE
 WINDOW_HEIGHT = HEIGHT * SCALE
