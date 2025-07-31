@@ -8,9 +8,10 @@
 #include "esp_psram.h"
 #endif
 
-static const char *TAG = "MAIN";
+static const char *TAG = "cams3rx";
 
 extern "C" void app_main() {
+    printf("Starting check psram...\n");
 #if CONFIG_SPIRAM
     size_t psram_size = esp_psram_get_size();
     ESP_LOGI(TAG, "PSRAM size: %d bytes", psram_size);
