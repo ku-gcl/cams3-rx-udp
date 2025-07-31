@@ -712,7 +712,11 @@ extern "C" void app_main() {
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000L;
     config.pixel_format = PIXFORMAT_JPEG;
-    config.frame_size = FRAMESIZE_QCIF; // frame size
+    config.frame_size = FRAMESIZE_QCIF; // OK: 176x144
+    // config.frame_size = FRAMESIZE_QVGA; // OK: 320x240
+    // config.frame_size = FRAMESIZE_VGA;  // NG: 640x480
+    // config.frame_size = FRAMESIZE_UXGA; // NG: 1600x1200
+
     config.jpeg_quality = 12;
     config.fb_count = 2;
     config.fb_location = CAMERA_FB_IN_PSRAM;
