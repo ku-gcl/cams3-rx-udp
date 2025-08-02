@@ -12,7 +12,9 @@ WINDOW_WIDTH = WIDTH * SCALE
 WINDOW_HEIGHT = HEIGHT * SCALE
 
 def display_image(screen, img):
+    img = cv2.GaussianBlur(img, (5, 5), 0)
     img = cv2.resize(img, (WINDOW_WIDTH, WINDOW_HEIGHT), interpolation=cv2.INTER_NEAREST)
+    # img = cv2.resize(img, (WINDOW_WIDTH, WINDOW_HEIGHT), interpolation=cv2.INTER_LINEAR)
     img_surface = pygame.surfarray.make_surface(img.transpose(1, 0, 2))
     screen.blit(img_surface, (0, 0))
     pygame.display.update()
